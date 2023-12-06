@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 )
@@ -149,7 +151,9 @@ func (c *IDock) startDocker() error {
 	}
 
 	c.Logf(1, "Waiting for services to start...\n")
-	err = c.wait(c.dockerTCPPorts, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), c.dockerMaxWait)
+	defer cancel()
+	err = c.wait(ctx, nil)
 	if err != nil {
 		c.Logf(1, "docker-compose services took too long to start (%s)\n", c.dockerMaxWait)
 		return err
@@ -180,7 +184,9 @@ func (c *IDock) run(m *testing.M) int {
 	start := time.Now()
 	done := make(chan struct{})
 	c.safelyWrap()
-	err = c.wait(c.programTCPPorts, done)
+	ctx, cancel := context.WithTimeout(context.Background(), c.programMaxWait)
+	defer cancel()
+	err = c.wait(ctx, c.programTCPPorts)
 	end := time.Now()
 	c.Logf(1, "program startup took %s\n", end.Sub(start))
 
@@ -210,50 +216,70 @@ func (c *IDock) run(m *testing.M) int {
 	return m.Run()
 }
 
-func (c *IDock) isPortOpen(ctx context.Context, port int) bool {
+func (c *IDock) isPortOpen(ctx context.Context, port int) (bool, error) {
 	var d net.Dialer
 
 	address := fmt.Sprintf("%s:%d", c.localhost, port)
 
 	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return false
+		return false, err
 	}
 	conn.Close()
 
-	return true
+	return true, nil
 }
 
-func (c *IDock) wait(ports []int, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.dockerMaxWait)
-	defer cancel()
-	for {
-		select {
-		case <-done:
-			return errProgramExited
-		case <-ctx.Done():
-			return errTimedOut
-		default:
-			allOpen := true
-			for _, port := range ports {
-				//shortctx, shortCancel := context.WithTimeout(ctx, c.tcpPortMaxWait)
-				open := c.isPortOpen(ctx, port)
-				if !open {
-					c.Logf(1, "Checking port %d - not responding\n", port)
-					allOpen = false
+func (c *IDock) wait(ctx context.Context, ports []int) error {
+	var wg sync.WaitGroup
+
+	results := make(chan int, len(ports))
+	for _, port := range ports {
+		wg.Add(1)
+		go func(ctx context.Context, port int) {
+			for {
+				sub, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+				got, err := c.isPortOpen(sub, port)
+				cancel()
+
+				if err == nil && got {
+					results <- port
 					break
-				} else {
-					c.Logf(2, "Checking port %d - responding\n", port)
+				}
+				if err != nil {
+					results <- (-1 * port)
+					break
 				}
 			}
-			if allOpen {
-				goto done
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
+			wg.Done()
+		}(ctx, port)
 	}
 
-done:
+	wg.Wait()
+
+	succeeded := make([]int, 0, len(ports))
+	failed := make([]int, 0, len(ports))
+	for result := range results {
+		if result < 0 {
+			failed = append(failed, (-1 * result))
+		} else {
+			succeeded = append(succeeded, result)
+		}
+	}
+
+	sort.Ints(succeeded)
+	for _, port := range succeeded {
+		c.Logf(1, "Port %d started\n", port)
+	}
+
+	sort.Ints(failed)
+	for _, port := range failed {
+		c.Logf(1, "Port %d failed to start\n", port)
+	}
+	if len(failed) > 0 {
+		return errTimedOut
+	}
+
 	c.Logf(1, "All services are ready.\n")
 	return nil
 }
