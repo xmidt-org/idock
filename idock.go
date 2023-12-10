@@ -243,10 +243,7 @@ func (c *IDock) isPortOpen(ctx context.Context, port int) error {
 
 	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
-		if ctx.Err() == nil {
-			err = errTimedOut
-		}
-		return err
+		return errTimedOut
 	}
 	conn.Close()
 

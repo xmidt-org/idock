@@ -43,7 +43,7 @@ func TestIDock_startDocker(t *testing.T) {
 				dockerComposeFile: "docker-compose.yml",
 				dockerMaxWait:     15 * time.Second,
 				localhost:         "localhost",
-				dockerTCPPorts:    []int{8000},
+				dockerTCPPorts:    []int{7999, 7998, 7997},
 			},
 		}, {
 			description: "success, verbosity",
@@ -53,7 +53,7 @@ func TestIDock_startDocker(t *testing.T) {
 				dockerComposeFile: "docker-compose.yml",
 				dockerMaxWait:     15 * time.Second,
 				localhost:         "localhost",
-				dockerTCPPorts:    []int{8000},
+				dockerTCPPorts:    []int{7999},
 			},
 		}, {
 			description: "a docker-compose file, but not enough ports",
@@ -62,7 +62,7 @@ func TestIDock_startDocker(t *testing.T) {
 				dockerComposeFile: "docker-compose.yml",
 				dockerMaxWait:     3 * time.Second,
 				localhost:         "localhost",
-				dockerTCPPorts:    []int{8000, 9999},
+				dockerTCPPorts:    []int{7999, 9999},
 			},
 			expectErr: unknownErr,
 		},
@@ -259,13 +259,13 @@ func TestNewAndOptions(t *testing.T) {
 
 				DockerComposeFile("docker-compose.yml"),
 				DockerMaxWait(5 * time.Second),
-				RequireDockerTCPPorts(8000),
+				RequireDockerTCPPorts(7999),
 
 				AfterDocker(func(context.Context, *IDock) {}),
 
 				Program(func() {}),
 				ProgramMaxWait(5 * time.Second),
-				RequireProgramTCPPorts(8000),
+				RequireProgramTCPPorts(7999),
 
 				AfterProgram(func(context.Context, *IDock) {}),
 				CleanupAttempts(3),
@@ -286,13 +286,13 @@ func TestNewAndOptions(t *testing.T) {
 
 				assert.Equal("docker-compose.yml", c.dockerComposeFile)
 				assert.Equal(15*time.Second, c.dockerMaxWait)
-				assert.Equal([]int{8000}, c.dockerTCPPorts)
+				assert.Equal([]int{7999}, c.dockerTCPPorts)
 
 				assert.NotNil(c.afterDocker)
 
 				assert.NotNil(c.program)
 				assert.Equal(15*time.Second, c.programMaxWait)
-				assert.Equal([]int{8000}, c.programTCPPorts)
+				assert.Equal([]int{7999}, c.programTCPPorts)
 
 				assert.NotNil(c.afterProgram)
 				assert.Equal(5, c.cleanupAttempts)
@@ -344,7 +344,7 @@ func TestRun(t *testing.T) {
 
 				DockerComposeFile("docker-compose.yml"),
 				DockerMaxWait(15 * time.Second),
-				RequireDockerTCPPorts(8000),
+				RequireDockerTCPPorts(7999),
 
 				AfterDocker(func(context.Context, *IDock) {
 					afterDockerCallCount++
@@ -381,7 +381,7 @@ func TestRun(t *testing.T) {
 
 				DockerComposeFile("docker-compose.yml"),
 				DockerMaxWait(15 * time.Second),
-				RequireDockerTCPPorts(8000),
+				RequireDockerTCPPorts(7999),
 
 				ProgramMaxWait(100 * time.Millisecond),
 				RequireProgramTCPPorts(port, 99),
