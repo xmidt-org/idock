@@ -30,7 +30,7 @@ const (
 
 	// CLEANUP_ATTEMPTS_FLAG is the default environment variable that controls
 	// how many times to retry the cleanup process.
-	CLEANUP_ATTEMPTS_FLAG = "IDOCK_CLEANUP_RETRIES"
+	CLEANUP_ATTEMPTS_FLAG = "IDOCK_CLEANUP_ATTEMPTS"
 )
 
 var (
@@ -177,6 +177,7 @@ func (c *IDock) startDocker(ctx context.Context) error {
 		return err
 	}
 
+	cmd.WaitDelay = c.dockerMaxWait
 	dockerStart := time.Now()
 	err = cmd.Start()
 	if err != nil {
@@ -185,6 +186,12 @@ func (c *IDock) startDocker(ctx context.Context) error {
 	c.dockerStarted = true
 
 	c.Logf(1, "Waiting for services to start...\n")
+	err = cmd.Wait()
+	if err != nil {
+		c.Logf(0, "docker-compose services failed to start: %s\n", err)
+		return err
+	}
+
 	err = c.waitForPorts(ctx, c.dockerTCPPorts)
 	if err != nil {
 		c.Logf(1, "docker-compose services took too long to start (%s)\n", c.dockerMaxWait)
@@ -272,6 +279,8 @@ func (c *IDock) waitForPorts(ctx context.Context, ports []int) error {
 				// root context is done.
 				if errors.Is(err, errTimedOut) && ctx.Err() == nil {
 					cancel()
+					// Give the service a chance to start.
+					time.Sleep(c.tcpPortMaxWait)
 					continue
 				}
 
@@ -342,8 +351,8 @@ func dockerCompose(ctx context.Context, useStdout bool, args ...string) (*exec.C
 		return nil, cmd.Err
 	}
 
+	cmd.Stderr = os.Stderr
 	if useStdout {
-		cmd.Stderr = os.Stdout
 		cmd.Stdout = os.Stdout
 	}
 
