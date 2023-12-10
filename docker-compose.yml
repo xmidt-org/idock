@@ -7,14 +7,12 @@ services:
     ports: 
       - "7999:80"
   dynamodb: 
-    container_name: dynamodb
     hostname: dynamodb.local.amazonaws.com
     image: amazon/dynamodb-local
     command: -jar DynamoDBLocal.jar -inMemory -sharedDb
     ports: 
       - "7998:8000"
   kinesis: 
-    container_name: kinesis
     hostname: kinesis
     image: saidsef/aws-kinesis-local
     ports: 
