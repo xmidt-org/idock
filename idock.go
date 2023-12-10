@@ -30,7 +30,7 @@ const (
 
 	// CLEANUP_ATTEMPTS_FLAG is the default environment variable that controls
 	// how many times to retry the cleanup process.
-	CLEANUP_ATTEMPTS_FLAG = "IDOCK_CLEANUP_RETRIES"
+	CLEANUP_ATTEMPTS_FLAG = "IDOCK_CLEANUP_ATTEMPTS"
 )
 
 var (
