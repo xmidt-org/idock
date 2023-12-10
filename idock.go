@@ -12,52 +12,53 @@ import (
 	"os/exec"
 	"sort"
 	"sync"
-	"testing"
 	"time"
 )
 
 const (
-	// IDOCK_RUN_FLAG is the environment variable that controls whether or not
-	// to run the integration tests.
-	RUN_FLAG = "IDOCK_RUN"
-
-	// IDOCK_VERBOSITY_FLAG is the environment variable that controls the
-	// verbosity of the output.
+	// IDOCK_VERBOSITY_FLAG is the default environment variable that controls
+	// the verbosity of the output.
 	VERBOSITY_FLAG = "IDOCK_VERBOSITY"
 
-	// DOCKER_MAX_WAIT_FLAG is the environment variable that controls how long
-	// to wait for the docker-compose program to start.
+	// DOCKER_MAX_WAIT_FLAG is the default environment variable that controls
+	// how long to wait for the docker-compose program to start.
 	DOCKER_MAX_WAIT_FLAG = "IDOCK_DOCKER_MAX_WAIT"
 
-	// PROGRAM_MAX_WAIT_FLAG is the environment variable that controls how long
-	// to wait for the program to start.
+	// PROGRAM_MAX_WAIT_FLAG is the default environment variable that controls
+	// how long to wait for the program to start.
 	PROGRAM_MAX_WAIT_FLAG = "IDOCK_PROGRAM_MAX_WAIT"
 
-	// CLEANUP_RETRIES_FLAG is the environment variable that controls how many
-	// times to retry the cleanup process.
-	CLEANUP_RETRIES_FLAG = "IDOCK_CLEANUP_RETRIES"
+	// CLEANUP_ATTEMPTS_FLAG is the default environment variable that controls
+	// how many times to retry the cleanup process.
+	CLEANUP_ATTEMPTS_FLAG = "IDOCK_CLEANUP_RETRIES"
 )
 
 var (
-	errTimedOut      = fmt.Errorf("timed out")
-	errProgramExited = fmt.Errorf("program exited")
+	errTimedOut = fmt.Errorf("timed out")
 )
 
 // IDock is the main struct for the idock package.
 type IDock struct {
+	// env variable names
+	verbosityFlag       string
+	dockerMaxWaitFlag   string
+	programMaxWaitFlag  string
+	cleanupAttemptsFlag string
+
 	tcpPortMaxWait    time.Duration
 	dockerComposeFile string
 	dockerTCPPorts    []int
 	dockerMaxWait     time.Duration
-	afterDocker       func(*IDock)
+	afterDocker       func(context.Context, *IDock)
 	program           func()
 	programTCPPorts   []int
 	programMaxWait    time.Duration
-	afterProgram      func(*IDock) error
-	cleanupRetries    int
+	afterProgram      func(context.Context, *IDock)
+	cleanupAttempts   int
 	localhost         string
 	verbosity         int
 	noDockerCompose   bool
+	dockerStarted     bool
 }
 
 // Option is an option interface for the IDock struct.
@@ -71,20 +72,28 @@ func (f optionFunc) apply(c *IDock) {
 	f(c)
 }
 
+func emptyProgram()                      {}
+func emptyAfter(context.Context, *IDock) {}
+
 // New creates a new IDock struct with the given options.
 func New(opts ...Option) *IDock {
-	c := &IDock{
-		tcpPortMaxWait: 2 * time.Second,
-		afterDocker:    func(*IDock) {},
-		program:        func() {},
-		afterProgram: func(*IDock) error {
-			return nil
-		},
-		programMaxWait: 2 * time.Second,
-		localhost:      "localhost",
-		cleanupRetries: 3,
+	var c IDock
+
+	defaults := []Option{
+		VerbosityEnvarName(VERBOSITY_FLAG),
+		CleanupAttemptsEnvarName(CLEANUP_ATTEMPTS_FLAG),
+		DockerMaxWaitEnvarName(DOCKER_MAX_WAIT_FLAG),
+		ProgramMaxWaitEnvarName(PROGRAM_MAX_WAIT_FLAG),
+		TCPPortMaxWait(10 * time.Millisecond),
+		AfterDocker(nil),
+		Program(nil),
+		AfterProgram(nil),
+		ProgramMaxWait(2 * time.Second),
+		Localhost("localhost"),
+		CleanupAttempts(3),
 	}
 
+	opts = append(defaults, opts...)
 	opts = append(opts, []Option{
 		verbosity(),
 		cleanupRetries(),
@@ -93,67 +102,89 @@ func New(opts ...Option) *IDock {
 	}...)
 
 	for _, opt := range opts {
-		opt.apply(c)
+		opt.apply(&c)
 	}
 
-	return c
+	return &c
 }
 
-// Verbosity gets the verbosity level.
+// Verbosity gets the verbosity level.  The verbosity level is set by the
+// IDOCK_VERBOSITY environment variable, or by the Verbosity option.  The
+// environment variable takes precedence over the option.  The default value is
+// 0.
 func (c *IDock) Verbosity() int {
 	return c.verbosity
 }
 
-// Run runs the integration tests.
-func (c *IDock) Run(m *testing.M) {
-	if os.Getenv(RUN_FLAG) == "" {
-		return
-	}
-
-	code := c.run(m)
-
-	c.Logf(1, "Exiting with code %d\n", code)
-
-	os.Exit(code)
-}
-
-func (c *IDock) startDocker() error {
-	if c.dockerComposeFile == "" {
-		c.cleanupRetries = 0
-		return nil
-	}
-
-	args := []string{"-f", c.dockerComposeFile, "up", "-d"}
-	if c.verbosity > 1 {
-		args = append([]string{"--verbose"}, args...)
-	}
-
-	cmd := exec.Command("docker-compose", args...)
-
-	// Some systems don't have docker-compose installed, so try to use the docker-compose
-	// binary from the docker image instead.
-	if errors.Is(cmd.Err, exec.ErrNotFound) {
-		args = append([]string{"compose"}, args...)
-		cmd = exec.Command("docker", args...)
-		c.noDockerCompose = true
-	}
-
-	if c.verbosity > 1 {
-		cmd.Stderr = os.Stdout
-		cmd.Stdout = os.Stdout
-	}
-
-	dockerStart := time.Now()
-	err := cmd.Start()
+// Start starts the docker-compose services and the program.  It waits for the
+// docker-compose services and the program to start before returning.  If the
+// docker-compose services or the program fail to start, then an error is
+// returned.
+func (c *IDock) Start() error {
+	ctx := context.Background()
+	err := c.startDocker(ctx)
 	if err != nil {
-		c.cleanupRetries = 0
+		c.Logf(0, "docker startup failed: %s\n", err)
 		return err
 	}
 
-	c.Logf(1, "Waiting for services to start...\n")
-	ctx, cancel := context.WithTimeout(context.Background(), c.dockerMaxWait)
+	if c.afterDocker != nil {
+		start := time.Now()
+		c.afterDocker(ctx, c)
+		end := time.Now()
+		c.Logf(1, "customization after docker took %s\n", end.Sub(start))
+	}
+
+	err = c.startProgram(ctx)
+	if err != nil {
+		c.Logf(0, "program startup failed: %s\n", err)
+		return err
+	}
+
+	if c.afterProgram != nil {
+		start := time.Now()
+		c.afterProgram(ctx, c)
+		end := time.Now()
+		c.Logf(1, "customization after program took %s\n", end.Sub(start))
+	}
+
+	return nil
+}
+
+// Stop stops the docker-compose services and cleans up any docker containers
+// that were started.
+func (c *IDock) Stop() {
+	c.cleanup()
+}
+
+func (c *IDock) startDocker(ctx context.Context) error {
+	if c.dockerComposeFile == "" {
+		return nil
+	}
+
+	verbose := c.verbosity > 1
+	args := []string{"-f", c.dockerComposeFile, "up", "-d"}
+	if verbose {
+		args = append([]string{"--verbose"}, args...)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.dockerMaxWait)
 	defer cancel()
-	err = c.wait(ctx, nil)
+
+	cmd, err := dockerCompose(ctx, verbose, args...)
+	if err != nil {
+		return err
+	}
+
+	dockerStart := time.Now()
+	err = cmd.Start()
+	if err != nil {
+		return err
+	}
+	c.dockerStarted = true
+
+	c.Logf(1, "Waiting for services to start...\n")
+	err = c.waitForPorts(ctx, c.dockerTCPPorts)
 	if err != nil {
 		c.Logf(1, "docker-compose services took too long to start (%s)\n", c.dockerMaxWait)
 		return err
@@ -164,73 +195,64 @@ func (c *IDock) startDocker() error {
 	return nil
 }
 
-func (c *IDock) run(m *testing.M) int {
-	err := c.startDocker()
-	if 0 <= c.cleanupRetries {
-		defer c.cleanup()
-	}
-	if err != nil {
-		c.Logf(0, "docker startup failed: %s\n", err)
-		return -1
+func (c *IDock) cleanup() {
+	c.Logf(1, "Cleaning up...\n")
+
+	if !c.dockerStarted || c.cleanupAttempts < 1 {
+		return
 	}
 
-	if c.afterDocker != nil {
-		start := time.Now()
-		c.afterDocker(c)
-		end := time.Now()
-		c.Logf(1, "customization after docker took %s\n", end.Sub(start))
-	}
-
-	start := time.Now()
-	done := make(chan struct{})
-	c.safelyWrap()
-	ctx, cancel := context.WithTimeout(context.Background(), c.programMaxWait)
-	defer cancel()
-	err = c.wait(ctx, c.programTCPPorts)
-	end := time.Now()
-	c.Logf(1, "program startup took %s\n", end.Sub(start))
-
-	if err != nil {
-		if errors.Is(err, errProgramExited) {
-			c.Logf(0, "program exited before services were ready\n")
-		} else if errors.Is(err, errTimedOut) {
-			c.Logf(0, "program took too long to start\n")
-		} else {
-			c.Logf(0, "program had some unknown error: %s\n", err)
-		}
-		return -1
-	}
-
-	if c.afterProgram != nil {
-		start := time.Now()
-		err = c.afterProgram(c)
-		end := time.Now()
-		c.Logf(1, "customization after program took %s\n", end.Sub(start))
-		if err != nil {
-			c.Logf(0, "customization after program started issued an error: %s\n", err)
-			return -1
+	args := []string{"-f", c.dockerComposeFile, "down", "--remove-orphans"}
+	cmd, err := dockerCompose(context.Background(), c.verbosity > 1, args...)
+	if err == nil {
+		for i := 0; i < c.cleanupAttempts; i++ {
+			err := cmd.Run()
+			if err == nil {
+				return
+			}
+			c.Logf(1, "Failed to clean up docker-compose services on try %d: %s\n", i+1, err)
 		}
 	}
 
-	c.Logf(2, "running the tests\n")
-	return m.Run()
+	fmt.Printf("Failed to clean up docker services. Please run `docker-compose down --remove-orphans` manually\n")
 }
 
-func (c *IDock) isPortOpen(ctx context.Context, port int) (bool, error) {
+func (c *IDock) startProgram(ctx context.Context) error {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, c.programMaxWait)
+	defer cancel()
+
+	go c.program()
+
+	err := c.waitForPorts(ctx, c.programTCPPorts)
+	end := time.Now()
+	if err != nil {
+		c.Logf(1, "program took too long to start: %s\n", end.Sub(start))
+		return err
+	}
+	c.Logf(1, "program startup took %s\n", end.Sub(start))
+
+	return nil
+}
+
+func (c *IDock) isPortOpen(ctx context.Context, port int) error {
 	var d net.Dialer
 
 	address := fmt.Sprintf("%s:%d", c.localhost, port)
 
 	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return false, err
+		if ctx.Err() == nil {
+			err = errTimedOut
+		}
+		return err
 	}
 	conn.Close()
 
-	return true, nil
+	return nil
 }
 
-func (c *IDock) wait(ctx context.Context, ports []int) error {
+func (c *IDock) waitForPorts(ctx context.Context, ports []int) error {
 	var wg sync.WaitGroup
 
 	results := make(chan int, len(ports))
@@ -238,27 +260,37 @@ func (c *IDock) wait(ctx context.Context, ports []int) error {
 		wg.Add(1)
 		go func(ctx context.Context, port int) {
 			for {
-				sub, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
-				got, err := c.isPortOpen(sub, port)
-				cancel()
+				sub, cancel := context.WithTimeout(ctx, c.tcpPortMaxWait)
 
-				if err == nil && got {
+				err := c.isPortOpen(sub, port)
+				if err == nil {
 					results <- port
-					break
+					cancel()
+					wg.Done()
+					return
 				}
-				if err != nil {
-					results <- (-1 * port)
-					break
+
+				// timing out while checking is not fatal unless the
+				// root context is done.
+				if errors.Is(err, errTimedOut) && ctx.Err() == nil {
+					cancel()
+					continue
 				}
+
+				results <- (-1 * port)
+				cancel()
+				wg.Done()
+				return
 			}
-			wg.Done()
 		}(ctx, port)
 	}
 
 	wg.Wait()
+	close(results)
 
 	succeeded := make([]int, 0, len(ports))
 	failed := make([]int, 0, len(ports))
+
 	for result := range results {
 		if result < 0 {
 			failed = append(failed, (-1 * result))
@@ -287,60 +319,35 @@ func (c *IDock) wait(ctx context.Context, ports []int) error {
 // Logf prints a message if the verbosity level is greater than or equal to the
 // given level.
 func (c *IDock) Logf(level int, format string, a ...any) {
-	if level <= c.verbosity {
-		return
+	if c.verbosity >= level {
+		fmt.Printf(format, a...)
 	}
-	fmt.Printf(format, a...)
 }
 
-func (c *IDock) cleanup() {
-	c.Logf(1, "Cleaning up...\n")
-
-	var cmd *exec.Cmd
-	if c.noDockerCompose {
-		cmd = exec.Command("docker", "compose", "-f", c.dockerComposeFile, "down", "--remove-orphans")
-	} else {
-		cmd = exec.Command("docker-compose", "-f", c.dockerComposeFile, "down", "--remove-orphans")
+func dockerCompose(ctx context.Context, useStdout bool, args ...string) (*exec.Cmd, error) {
+	cmd := exec.CommandContext(ctx, "docker-compose", args...)
+	if cmd == nil {
+		return nil, errors.New("failed to create docker-compose command")
 	}
 
-	if c.verbosity > 1 {
+	// Some systems don't have docker-compose installed, so try to use the docker-compose
+	// binary from the docker image instead.
+	if errors.Is(cmd.Err, exec.ErrNotFound) {
+		args = append([]string{"compose"}, args...)
+		cmd = exec.CommandContext(ctx, "docker", args...)
+		if cmd == nil {
+			return nil, errors.New("failed to create docker-compose command")
+		}
+	}
+
+	if cmd.Err != nil {
+		return nil, cmd.Err
+	}
+
+	if useStdout {
 		cmd.Stderr = os.Stdout
 		cmd.Stdout = os.Stdout
 	}
 
-	for i := 0; i < c.cleanupRetries; i++ {
-		err := cmd.Run()
-		if err == nil {
-			return
-		}
-		c.Logf(1, "Failed to clean up docker-compose services on try %d: %s\n", i+1, err)
-	}
-
-	fmt.Printf("Failed to clean up docker services. Please run `docker-compose down --remove-orphans` manually\n")
-}
-
-func (c *IDock) safelyWrap() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), c.programMaxWait)
-	defer cancel()
-
-	failure := make(chan bool)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Println("recovered from panic")
-				fmt.Println(r)
-				failure <- true
-			}
-		}()
-
-		c.program()
-	}()
-
-	select {
-	case <-failure:
-		return success
-	case <-ctx.Done():
-		// The program started and didn't fail in the given time, so return true.
-		return true
-	}
+	return cmd, nil
 }

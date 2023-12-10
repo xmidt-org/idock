@@ -4,6 +4,7 @@
 package idock
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -40,22 +41,22 @@ func DockerMaxWait(d time.Duration) Option {
 
 // AfterDocker is a function that is called after the docker-compose program
 // has started but before the program is started.
-func AfterDocker(f func(*IDock)) Option {
+func AfterDocker(f func(context.Context, *IDock)) Option {
 	return optionFunc(func(c *IDock) {
-		if f == nil {
-			f = func(*IDock) {}
+		c.afterDocker = emptyAfter
+		if f != nil {
+			c.afterDocker = f
 		}
-		c.afterDocker = f
 	})
 }
 
 // Program is the function that is called to start the program.
 func Program(f func()) Option {
 	return optionFunc(func(c *IDock) {
-		if f == nil {
-			f = func() {}
+		c.program = emptyProgram
+		if f != nil {
+			c.program = f
 		}
-		c.program = f
 	})
 }
 
@@ -81,26 +82,27 @@ func ProgramMaxWait(d time.Duration) Option {
 
 // AfterProgram is a function that is called after the program has started but
 // before the tests are run.
-func AfterProgram(f func(*IDock) error) Option {
+func AfterProgram(f func(context.Context, *IDock)) Option {
 	return optionFunc(func(c *IDock) {
-		if f == nil {
-			f = func(*IDock) error {
-				return nil
-			}
+		c.afterProgram = emptyAfter
+		if f != nil {
+			c.afterProgram = f
 		}
-		c.afterProgram = f
 	})
 }
 
-// CleanupRetries sets the number of times to retry the cleanup process before
-// giving up and leaving any docker containers running.
+// CleanupAttempts sets the number of times to attempt to cleanup the docker
+// containers process before giving up and leaving any docker containers running.
+// A value of 0 means do not attempt to cleanup the docker containers.  This is
+// useful for debugging or speeding up tests.
+//
 // The default value is 3.
-func CleanupRetries(n int) Option {
+func CleanupAttempts(n int) Option {
 	return optionFunc(func(c *IDock) {
 		if n < 0 {
 			panic(fmt.Sprintf("cleanupRetries must be >= 0: %d\n", n))
 		}
-		c.cleanupRetries = n
+		c.cleanupAttempts = n
 	})
 }
 
@@ -124,10 +126,49 @@ func TCPPortMaxWait(d time.Duration) Option {
 	})
 }
 
+// Verbosity sets the verbosity level.
+func Verbosity(n int) Option {
+	return optionFunc(func(c *IDock) {
+		c.verbosity = n
+	})
+}
+
+// VerbosityEnvarName sets the environment variable name to use for the
+// verbosity level.
+func VerbosityEnvarName(name string) Option {
+	return optionFunc(func(c *IDock) {
+		c.verbosityFlag = name
+	})
+}
+
+// CleanupAttemptsEnvarName sets the environment variable name to use for the
+// cleanup attempts.
+func CleanupAttemptsEnvarName(name string) Option {
+	return optionFunc(func(c *IDock) {
+		c.cleanupAttemptsFlag = name
+	})
+}
+
+// DockerMaxWaitEnvarName sets the environment variable name to use for the
+// docker max wait.
+func DockerMaxWaitEnvarName(name string) Option {
+	return optionFunc(func(c *IDock) {
+		c.dockerMaxWaitFlag = name
+	})
+}
+
+// ProgramMaxWaitEnvarName sets the environment variable name to use for the
+// program max wait.
+func ProgramMaxWaitEnvarName(name string) Option {
+	return optionFunc(func(c *IDock) {
+		c.programMaxWaitFlag = name
+	})
+}
+
 // verbosity sets the verbosity level based on the environment variable.
 func verbosity() Option {
 	return optionFunc(func(c *IDock) {
-		c.verbosity = envToInt(VERBOSITY_FLAG, c.verbosity)
+		c.verbosity = envToInt(c.verbosityFlag, c.verbosity)
 	})
 }
 
@@ -136,7 +177,7 @@ func verbosity() Option {
 // variable.
 func cleanupRetries() Option {
 	return optionFunc(func(c *IDock) {
-		c.cleanupRetries = envToInt(CLEANUP_RETRIES_FLAG, c.cleanupRetries)
+		c.cleanupAttempts = envToInt(c.cleanupAttemptsFlag, c.cleanupAttempts)
 	})
 }
 
@@ -144,7 +185,7 @@ func cleanupRetries() Option {
 // programs to start based on the environment variable.
 func dockerMaxWait() Option {
 	return optionFunc(func(c *IDock) {
-		c.dockerMaxWait = envToDuration(DOCKER_MAX_WAIT_FLAG, c.dockerMaxWait)
+		c.dockerMaxWait = envToDuration(c.dockerMaxWaitFlag, c.dockerMaxWait)
 	})
 }
 
@@ -152,7 +193,7 @@ func dockerMaxWait() Option {
 // start based on the environment variable.
 func programMaxWait() Option {
 	return optionFunc(func(c *IDock) {
-		c.programMaxWait = envToDuration(PROGRAM_MAX_WAIT_FLAG, c.programMaxWait)
+		c.programMaxWait = envToDuration(c.programMaxWaitFlag, c.programMaxWait)
 	})
 }
 

@@ -5,6 +5,7 @@ package idock
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,43 +17,171 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIDock_safelyWrap(t *testing.T) {
+var unknownErr = errors.New("unknown error")
+
+func TestIDock_startDocker(t *testing.T) {
+	var noDockerCompose bool
 	tests := []struct {
 		description string
 		have        IDock
-		expect      bool
+		makeServer  bool
+		expectErr   error
 	}{
 		{
-			description: "program returns",
-			have: IDock{
-				program:        func() {},
-				programMaxWait: time.Second,
-			},
-			expect: true,
+			description: "no docker-compose file",
 		}, {
-			description: "program panics",
+			description: "a docker-compose file, but not enought time",
 			have: IDock{
-				program:        func() { panic("program panics") },
-				programMaxWait: time.Second,
+				dockerComposeFile: "docker-compose.yml",
+				dockerMaxWait:     1 * time.Nanosecond,
+			},
+			expectErr: unknownErr,
+		}, {
+			description: "success, no verbosity",
+			have: IDock{
+				tcpPortMaxWait:    10 * time.Millisecond,
+				dockerComposeFile: "docker-compose.yml",
+				dockerMaxWait:     15 * time.Second,
+				localhost:         "localhost",
+				dockerTCPPorts:    []int{8000},
 			},
 		}, {
-			expect:      true,
-			description: "program never returns",
+			description: "success, verbosity",
 			have: IDock{
-				program: func() {
-					for {
-						time.Sleep(time.Second)
-					}
-				},
-				programMaxWait: time.Second,
+				verbosity:         99,
+				tcpPortMaxWait:    10 * time.Millisecond,
+				dockerComposeFile: "docker-compose.yml",
+				dockerMaxWait:     15 * time.Second,
+				localhost:         "localhost",
+				dockerTCPPorts:    []int{8000},
 			},
+		}, {
+			description: "a docker-compose file, but not enough ports",
+			have: IDock{
+				tcpPortMaxWait:    10 * time.Millisecond,
+				dockerComposeFile: "docker-compose.yml",
+				dockerMaxWait:     3 * time.Second,
+				localhost:         "localhost",
+				dockerTCPPorts:    []int{8000, 9999},
+			},
+			expectErr: unknownErr,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			assert := assert.New(t)
-			got := tc.have.safelyWrap()
-			assert.Equal(tc.expect, got)
+			//require := require.New(t)
+
+			err := tc.have.startDocker(context.Background())
+
+			if tc.have.noDockerCompose {
+				noDockerCompose = true
+			}
+			switch tc.expectErr {
+			case nil:
+				assert.NoError(err)
+			case unknownErr:
+				assert.Error(err)
+			default:
+				assert.ErrorIs(err, tc.expectErr)
+			}
+		})
+	}
+
+	clean := IDock{
+		dockerComposeFile: "docker-compose.yml",
+		dockerStarted:     true,
+		cleanupAttempts:   5,
+		verbosity:         99,
+		noDockerCompose:   noDockerCompose,
+	}
+	clean.cleanup()
+}
+
+func TestIDock_startProgram(t *testing.T) {
+	tests := []struct {
+		description string
+		have        IDock
+		makeServer  bool
+		expectErr   error
+	}{
+		{
+			description: "program returns",
+			have: IDock{
+				program:        func() {},
+				programMaxWait: time.Millisecond * 100,
+			},
+		}, {
+			description: "program never returns",
+			have: IDock{
+				tcpPortMaxWait: 10 * time.Millisecond,
+				program: func() {
+					for {
+						time.Sleep(time.Second)
+					}
+				},
+				programMaxWait: time.Millisecond * 100,
+			},
+		}, {
+			description: "program never returns, ports are open",
+			have: IDock{
+				tcpPortMaxWait: 10 * time.Millisecond,
+				program: func() {
+					for {
+						time.Sleep(time.Second)
+					}
+				},
+				programMaxWait: time.Millisecond * 100,
+			},
+			makeServer: true,
+		}, {
+			description: "program never returns, not enough ports are open",
+			have: IDock{
+				tcpPortMaxWait: 10 * time.Millisecond,
+				program: func() {
+					for {
+						time.Sleep(time.Second)
+					}
+				},
+				programTCPPorts: []int{51},
+				programMaxWait:  time.Millisecond * 100,
+			},
+			makeServer: true,
+			expectErr:  unknownErr,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			if tc.makeServer {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("Mock response"))
+				}))
+				defer server.Close()
+
+				u, err := url.Parse(server.URL)
+				require.NoError(err)
+				authority := u.Hostname()
+				port, err := strconv.Atoi(u.Port())
+				require.NoError(err)
+
+				tc.have.localhost = authority
+				tc.have.programTCPPorts = append(tc.have.programTCPPorts, port)
+			}
+
+			err := tc.have.startProgram(context.Background())
+
+			switch tc.expectErr {
+			case nil:
+				assert.NoError(err)
+			case unknownErr:
+				assert.Error(err)
+			default:
+				assert.ErrorIs(err, tc.expectErr)
+			}
 		})
 	}
 }
@@ -61,15 +190,15 @@ func TestIDock_isPortOpen(t *testing.T) {
 	tests := []struct {
 		description string
 		wait        time.Duration
-		expect      bool
+		expectErr   error
 	}{
 		{
 			description: "port is not open",
 			wait:        100 * time.Millisecond,
+			expectErr:   unknownErr,
 		}, {
 			description: "port is open",
 			wait:        100 * time.Millisecond,
-			expect:      true,
 		},
 	}
 	for _, tc := range tests {
@@ -80,10 +209,10 @@ func TestIDock_isPortOpen(t *testing.T) {
 			authority := "localhost"
 			port := 51 // probably not used
 
-			if tc.expect {
+			if tc.expectErr == nil {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
-					w.Write([]byte("Mock response"))
+					_, _ = w.Write([]byte("Mock response"))
 				}))
 				defer server.Close()
 
@@ -100,46 +229,186 @@ func TestIDock_isPortOpen(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), tc.wait)
 			defer cancel()
 
-			assert.Equal(tc.expect, c.isPortOpen(ctx, port))
+			err := c.isPortOpen(ctx, port)
+
+			switch tc.expectErr {
+			case nil:
+				assert.NoError(err)
+
+			case unknownErr:
+				assert.Error(err)
+			default:
+				assert.ErrorIs(err, tc.expectErr)
+			}
 		})
 	}
 }
 
-func TestIDock_wait(t *testing.T) {
+func TestNewAndOptions(t *testing.T) {
 	tests := []struct {
 		description string
-		ports       []int
-		done        chan struct{}
-		expectedErr error
+		opts        []Option
+		env         map[string]string
+		validate    func(*assert.Assertions, *IDock)
 	}{
 		{
-			description: "",
-			// TODO: Add test cases.
+			description: "All the options",
+			opts: []Option{
+				TCPPortMaxWait(15 * time.Millisecond),
+				Localhost("localhost"),
+
+				DockerComposeFile("docker-compose.yml"),
+				DockerMaxWait(5 * time.Second),
+				RequireDockerTCPPorts(8000),
+
+				AfterDocker(func(context.Context, *IDock) {}),
+
+				Program(func() {}),
+				ProgramMaxWait(5 * time.Second),
+				RequireProgramTCPPorts(8000),
+
+				AfterProgram(func(context.Context, *IDock) {}),
+				CleanupAttempts(3),
+				Verbosity(5),
+			},
+			env: map[string]string{
+				"IDOCK_VERBOSITY":        "2",
+				"IDOCK_DOCKER_MAX_WAIT":  "15s",
+				"IDOCK_PROGRAM_MAX_WAIT": "15s",
+				"IDOCK_CLEANUP_RETRIES":  "5",
+			},
+			validate: func(assert *assert.Assertions, c *IDock) {
+				if !assert.NotNil(c) {
+					return
+				}
+				assert.Equal(15*time.Millisecond, c.tcpPortMaxWait)
+				assert.Equal("localhost", c.localhost)
+
+				assert.Equal("docker-compose.yml", c.dockerComposeFile)
+				assert.Equal(15*time.Second, c.dockerMaxWait)
+				assert.Equal([]int{8000}, c.dockerTCPPorts)
+
+				assert.NotNil(c.afterDocker)
+
+				assert.NotNil(c.program)
+				assert.Equal(15*time.Second, c.programMaxWait)
+				assert.Equal([]int{8000}, c.programTCPPorts)
+
+				assert.NotNil(c.afterProgram)
+				assert.Equal(5, c.cleanupAttempts)
+				assert.Equal(2, c.Verbosity())
+			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			assert := assert.New(t)
-			require := require.New(t)
-			c := &IDock{
-				tcpPortMaxWait:    tc.fields.tcpPortMaxWait,
-				dockerComposeFile: tc.fields.dockerComposeFile,
-				dockerTCPPorts:    tc.fields.dockerTCPPorts,
-				dockerMaxWait:     tc.fields.dockerMaxWait,
-				afterDocker:       tc.fields.afterDocker,
-				program:           tc.fields.program,
-				programTCPPorts:   tc.fields.programTCPPorts,
-				programMaxWait:    tc.fields.programMaxWait,
-				afterProgram:      tc.fields.afterProgram,
-				cleanupRetries:    tc.fields.cleanupRetries,
-				localhost:         tc.fields.localhost,
-				verbosity:         tc.fields.verbosity,
-				noDockerCompose:   tc.fields.noDockerCompose,
+
+			for k, v := range tc.env {
+				t.Setenv(k, v)
 			}
+			c := New(tc.opts...)
+			tc.validate(assert, c)
+		})
+	}
+}
 
-			err := c.wait(tc.ports, tc.done)
+func TestRun(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Mock response"))
+	}))
+	defer server.Close()
 
-			assert.ErrorIs(err, tc.expectedErr)
+	require := require.New(t)
+	u, err := url.Parse(server.URL)
+	require.NoError(err)
+	authority := u.Hostname()
+	port, err := strconv.Atoi(u.Port())
+	require.NoError(err)
+
+	var afterDockerCallCount int
+	var programCallCount int
+	var afterProgramCallCount int
+
+	tests := []struct {
+		description string
+		opts        []Option
+		expectErr   error
+	}{
+		{
+			description: "Many options",
+			opts: []Option{
+				TCPPortMaxWait(15 * time.Millisecond),
+				Localhost(authority),
+
+				DockerComposeFile("docker-compose.yml"),
+				DockerMaxWait(15 * time.Second),
+				RequireDockerTCPPorts(8000),
+
+				AfterDocker(func(context.Context, *IDock) {
+					afterDockerCallCount++
+				}),
+
+				Program(func() {
+					programCallCount++
+				}),
+				ProgramMaxWait(15 * time.Second),
+				RequireProgramTCPPorts(port),
+
+				AfterProgram(func(context.Context, *IDock) {
+					afterProgramCallCount++
+				}),
+				CleanupAttempts(5),
+			},
+		}, {
+			description: "fail starting docker",
+			opts: []Option{
+				TCPPortMaxWait(15 * time.Millisecond),
+				Localhost(authority),
+
+				DockerComposeFile("docker-compose.yml"),
+				DockerMaxWait(15 * time.Millisecond),
+				RequireDockerTCPPorts(8001),
+				CleanupAttempts(5),
+			},
+			expectErr: unknownErr,
+		}, {
+			description: "fail starting program",
+			opts: []Option{
+				TCPPortMaxWait(15 * time.Millisecond),
+				Localhost(authority),
+
+				DockerComposeFile("docker-compose.yml"),
+				DockerMaxWait(15 * time.Second),
+				RequireDockerTCPPorts(8000),
+
+				ProgramMaxWait(100 * time.Millisecond),
+				RequireProgramTCPPorts(port, 99),
+
+				CleanupAttempts(5),
+			},
+			expectErr: unknownErr,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			assert := assert.New(t)
+
+			c := New(tc.opts...)
+			err := c.Start()
+
+			switch tc.expectErr {
+			case nil:
+				c.Stop()
+				assert.NoError(err)
+
+			case unknownErr:
+				assert.Error(err)
+			default:
+				assert.ErrorIs(err, tc.expectErr)
+			}
 		})
 	}
 }
