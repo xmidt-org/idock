@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2023 Comcast Cable Communications Management, LLC
+# SPDX-License-Identifier: Apache-2.0
+--- 
+services: 
+  nginx: 
+    image: nginx
+    ports: 
+      - "8000:80"
+version: "3.8"
