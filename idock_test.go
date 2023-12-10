@@ -275,7 +275,7 @@ func TestNewAndOptions(t *testing.T) {
 				"IDOCK_VERBOSITY":        "2",
 				"IDOCK_DOCKER_MAX_WAIT":  "15s",
 				"IDOCK_PROGRAM_MAX_WAIT": "15s",
-				"IDOCK_CLEANUP_RETRIES":  "5",
+				"IDOCK_CLEANUP_ATTEMPTS": "5",
 			},
 			validate: func(assert *assert.Assertions, c *IDock) {
 				if !assert.NotNil(c) {

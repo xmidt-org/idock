@@ -31,13 +31,26 @@ func RequireDockerTCPPorts(ports ...int) Option {
 // DockerMaxWait sets the maximum amount of time to wait for the docker-compose
 // programs to start.
 //
-// Defaults to 60 seconds.
+// Defaults to 10 seconds.
 func DockerMaxWait(d time.Duration) Option {
 	return optionFunc(func(c *IDock) {
 		if d < 0 {
 			panic(fmt.Sprintf("dockerMaxWait must be >= 0: %s\n", d))
 		}
 		c.dockerMaxWait = d
+	})
+}
+
+// DockerPullMaxWait sets the maximum amount of time to wait for the docker-compose
+// programs to pull images.
+//
+// Defaults to 60 seconds.
+func DockerPullMaxWait(d time.Duration) Option {
+	return optionFunc(func(c *IDock) {
+		if d < 0 {
+			panic(fmt.Sprintf("dockerMaxPullWait must be >= 0: %s\n", d))
+		}
+		c.dockerMaxPullWait = d
 	})
 }
 
@@ -177,6 +190,16 @@ func DockerMaxWaitEnvarName(name string) Option {
 func ProgramMaxWaitEnvarName(name string) Option {
 	return optionFunc(func(c *IDock) {
 		c.programMaxWaitFlag = name
+	})
+}
+
+// DockerPullMaxWaitEnvarName sets the environment variable name to use for the
+// docker pull max wait.
+//
+// The default value is IDOCK_DOCKER_PULL_MAX_WAIT.
+func DockerPullMaxWaitEnvarName(name string) Option {
+	return optionFunc(func(c *IDock) {
+		c.dockerMaxPullWaitFlag = name
 	})
 }
 

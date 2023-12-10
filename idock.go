@@ -20,6 +20,10 @@ const (
 	// the verbosity of the output.
 	VERBOSITY_FLAG = "IDOCK_VERBOSITY"
 
+	// DOCKER_MAX_PULL_WAIT_FLAG is the default environment variable that
+	// controls how long to wait for the docker-compose program to pull images.
+	DOCKER_MAX_PULL_WAIT_FLAG = "IDOCK_DOCKER_MAX_PULL_WAIT"
+
 	// DOCKER_MAX_WAIT_FLAG is the default environment variable that controls
 	// how long to wait for the docker-compose program to start.
 	DOCKER_MAX_WAIT_FLAG = "IDOCK_DOCKER_MAX_WAIT"
@@ -40,15 +44,17 @@ var (
 // IDock is the main struct for the idock package.
 type IDock struct {
 	// env variable names
-	verbosityFlag       string
-	dockerMaxWaitFlag   string
-	programMaxWaitFlag  string
-	cleanupAttemptsFlag string
+	verbosityFlag         string
+	dockerMaxPullWaitFlag string
+	dockerMaxWaitFlag     string
+	programMaxWaitFlag    string
+	cleanupAttemptsFlag   string
 
 	tcpPortMaxWait    time.Duration
 	dockerComposeFile string
 	dockerTCPPorts    []int
 	dockerMaxWait     time.Duration
+	dockerMaxPullWait time.Duration
 	afterDocker       func(context.Context, *IDock)
 	program           func()
 	programTCPPorts   []int
@@ -84,8 +90,10 @@ func New(opts ...Option) *IDock {
 		CleanupAttemptsEnvarName(CLEANUP_ATTEMPTS_FLAG),
 		DockerMaxWaitEnvarName(DOCKER_MAX_WAIT_FLAG),
 		ProgramMaxWaitEnvarName(PROGRAM_MAX_WAIT_FLAG),
+		DockerPullMaxWaitEnvarName(DOCKER_MAX_PULL_WAIT_FLAG),
 		TCPPortMaxWait(10 * time.Millisecond),
-		DockerMaxWait(60 * time.Second),
+		DockerMaxWait(10 * time.Second),
+		DockerPullMaxWait(60 * time.Second),
 		ProgramMaxWait(10 * time.Second),
 		AfterDocker(nil),
 		Program(nil),
@@ -164,6 +172,27 @@ func (c *IDock) startDocker(ctx context.Context) error {
 	}
 
 	verbose := c.verbosity > 1
+
+	cmd, err := dockerCompose(ctx, verbose, "-f", c.dockerComposeFile, "pull")
+	if err != nil {
+		return fmt.Errorf("error pulling docker images: %w", err)
+	}
+
+	cmd.WaitDelay = c.dockerMaxPullWait
+	dockerPullStart := time.Now()
+	c.Logf(1, "Waiting for docker images to pull...\n")
+	err = cmd.Start()
+	if err != nil {
+		return fmt.Errorf("error pulling docker images: %w", err)
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		c.Logf(0, "docker-compose pull failed: %s\n", err)
+		return err
+	}
+	c.Logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
+
 	args := []string{"-f", c.dockerComposeFile, "up", "-d"}
 	if verbose {
 		args = append([]string{"--verbose"}, args...)
@@ -172,7 +201,7 @@ func (c *IDock) startDocker(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.dockerMaxWait)
 	defer cancel()
 
-	cmd, err := dockerCompose(ctx, verbose, args...)
+	cmd, err = dockerCompose(ctx, verbose, args...)
 	if err != nil {
 		return err
 	}
