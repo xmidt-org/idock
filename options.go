@@ -30,6 +30,8 @@ func RequireDockerTCPPorts(ports ...int) Option {
 
 // DockerMaxWait sets the maximum amount of time to wait for the docker-compose
 // programs to start.
+//
+// Defaults to 60 seconds.
 func DockerMaxWait(d time.Duration) Option {
 	return optionFunc(func(c *IDock) {
 		if d < 0 {
@@ -70,7 +72,8 @@ func RequireProgramTCPPorts(ports ...int) Option {
 
 // ProgramMaxWait sets the maximum amount of time to wait for the program to
 // start.
-// The default value is 2 seconds.
+//
+// The default value is 10 seconds.
 func ProgramMaxWait(d time.Duration) Option {
 	return optionFunc(func(c *IDock) {
 		if d < 0 {
@@ -107,7 +110,8 @@ func CleanupAttempts(n int) Option {
 }
 
 // Localhost sets the localhost address to use when connecting to the program.
-// The default value of 'localhost' is used.
+//
+// The default value is 'localhost'.
 func Localhost(s string) Option {
 	return optionFunc(func(c *IDock) {
 		c.localhost = s
@@ -116,7 +120,8 @@ func Localhost(s string) Option {
 
 // TCPPortMaxWait sets the maximum amount of time to wait while dialing a TCP
 // port.
-// The default value is 2 seconds.
+//
+// The default value is 10 milliseconds.
 func TCPPortMaxWait(d time.Duration) Option {
 	return optionFunc(func(c *IDock) {
 		if d < 0 {
@@ -127,6 +132,8 @@ func TCPPortMaxWait(d time.Duration) Option {
 }
 
 // Verbosity sets the verbosity level.
+//
+// The default value is 0.
 func Verbosity(n int) Option {
 	return optionFunc(func(c *IDock) {
 		c.verbosity = n
@@ -135,6 +142,8 @@ func Verbosity(n int) Option {
 
 // VerbosityEnvarName sets the environment variable name to use for the
 // verbosity level.
+//
+// The default value is IDOCK_VERBOSITY.
 func VerbosityEnvarName(name string) Option {
 	return optionFunc(func(c *IDock) {
 		c.verbosityFlag = name
@@ -143,6 +152,8 @@ func VerbosityEnvarName(name string) Option {
 
 // CleanupAttemptsEnvarName sets the environment variable name to use for the
 // cleanup attempts.
+//
+// The default value is IDOCK_CLEANUP_RETRIES.
 func CleanupAttemptsEnvarName(name string) Option {
 	return optionFunc(func(c *IDock) {
 		c.cleanupAttemptsFlag = name
@@ -151,6 +162,8 @@ func CleanupAttemptsEnvarName(name string) Option {
 
 // DockerMaxWaitEnvarName sets the environment variable name to use for the
 // docker max wait.
+//
+// The default value is IDOCK_DOCKER_MAX_WAIT.
 func DockerMaxWaitEnvarName(name string) Option {
 	return optionFunc(func(c *IDock) {
 		c.dockerMaxWaitFlag = name
@@ -159,6 +172,8 @@ func DockerMaxWaitEnvarName(name string) Option {
 
 // ProgramMaxWaitEnvarName sets the environment variable name to use for the
 // program max wait.
+//
+// The default value is IDOCK_PROGRAM_MAX_WAIT.
 func ProgramMaxWaitEnvarName(name string) Option {
 	return optionFunc(func(c *IDock) {
 		c.programMaxWaitFlag = name

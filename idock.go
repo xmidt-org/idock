@@ -85,10 +85,11 @@ func New(opts ...Option) *IDock {
 		DockerMaxWaitEnvarName(DOCKER_MAX_WAIT_FLAG),
 		ProgramMaxWaitEnvarName(PROGRAM_MAX_WAIT_FLAG),
 		TCPPortMaxWait(10 * time.Millisecond),
+		DockerMaxWait(60 * time.Second),
+		ProgramMaxWait(10 * time.Second),
 		AfterDocker(nil),
 		Program(nil),
 		AfterProgram(nil),
-		ProgramMaxWait(2 * time.Second),
 		Localhost("localhost"),
 		CleanupAttempts(3),
 	}
