@@ -50,6 +50,18 @@ func TestIDock_startDocker(t *testing.T) {
 			description: "success, verbosity",
 			have: IDock{
 				verbosity:         99,
+				skipDockerPull:    true,
+				tcpPortMaxWait:    10 * time.Millisecond,
+				dockerComposeFile: "docker-compose.yml",
+				dockerMaxWait:     15 * time.Second,
+				dockerMaxPullWait: 60 * time.Second,
+				localhost:         "localhost",
+				dockerTCPPorts:    []int{7999},
+			},
+		}, {
+			description: "success, verbosity",
+			have: IDock{
+				verbosity:         99,
 				tcpPortMaxWait:    10 * time.Millisecond,
 				dockerComposeFile: "docker-compose.yml",
 				dockerMaxWait:     15 * time.Second,

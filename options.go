@@ -203,6 +203,16 @@ func DockerPullMaxWaitEnvarName(name string) Option {
 	})
 }
 
+// SkipDockerPullEnvarName sets the environment variable name to use for the
+// skip docker pull flag.
+//
+// The default value is IDOCK_SKIP_DOCKER_PULL.
+func SkipDockerPullEnvarName(name string) Option {
+	return optionFunc(func(c *IDock) {
+		c.skipDockerPullFlag = name
+	})
+}
+
 // verbosity sets the verbosity level based on the environment variable.
 func verbosity() Option {
 	return optionFunc(func(c *IDock) {
@@ -235,6 +245,13 @@ func programMaxWait() Option {
 	})
 }
 
+// skipDockerPull sets the skipDockerPull flag based on the environment variable.
+func skipDockerPull() Option {
+	return optionFunc(func(c *IDock) {
+		c.skipDockerPull = envToBool(c.dockerMaxPullWaitFlag, c.skipDockerPull)
+	})
+}
+
 func envToDuration(name string, def time.Duration) time.Duration {
 	s := strings.TrimSpace(os.Getenv(name))
 	if s == "" {
@@ -259,4 +276,18 @@ func envToInt(name string, def int) int {
 			name, s, err))
 	}
 	return n
+}
+
+func envToBool(name string, def bool) bool {
+	s := strings.TrimSpace(os.Getenv(name))
+	if s == "" {
+		return def
+	}
+
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		panic(fmt.Sprintf("%s having value '%s' must be a boolean: %s\n",
+			name, s, err))
+	}
+	return b
 }

@@ -35,6 +35,10 @@ const (
 	// CLEANUP_ATTEMPTS_FLAG is the default environment variable that controls
 	// how many times to retry the cleanup process.
 	CLEANUP_ATTEMPTS_FLAG = "IDOCK_CLEANUP_ATTEMPTS"
+
+	// SKIP_DOCKER_PULL_FLAG is the default environment variable that controls
+	// whether or not to skip the docker-compose pull step.
+	SKIP_DOCKER_PULL_FLAG = "IDOCK_SKIP_DOCKER_PULL"
 )
 
 var (
@@ -49,12 +53,14 @@ type IDock struct {
 	dockerMaxWaitFlag     string
 	programMaxWaitFlag    string
 	cleanupAttemptsFlag   string
+	skipDockerPullFlag    string
 
 	tcpPortMaxWait    time.Duration
 	dockerComposeFile string
 	dockerTCPPorts    []int
 	dockerMaxWait     time.Duration
 	dockerMaxPullWait time.Duration
+	skipDockerPull    bool
 	afterDocker       func(context.Context, *IDock)
 	program           func()
 	programTCPPorts   []int
@@ -91,6 +97,7 @@ func New(opts ...Option) *IDock {
 		DockerMaxWaitEnvarName(DOCKER_MAX_WAIT_FLAG),
 		ProgramMaxWaitEnvarName(PROGRAM_MAX_WAIT_FLAG),
 		DockerPullMaxWaitEnvarName(DOCKER_MAX_PULL_WAIT_FLAG),
+		SkipDockerPullEnvarName(SKIP_DOCKER_PULL_FLAG),
 		TCPPortMaxWait(10 * time.Millisecond),
 		DockerMaxWait(10 * time.Second),
 		DockerPullMaxWait(60 * time.Second),
@@ -108,6 +115,7 @@ func New(opts ...Option) *IDock {
 		cleanupRetries(),
 		dockerMaxWait(),
 		programMaxWait(),
+		skipDockerPull(),
 	}...)
 
 	for _, opt := range opts {
@@ -179,25 +187,29 @@ func (c *IDock) startDocker(ctx context.Context) error {
 
 	verbose := c.verbosity > 1
 
-	cmd, err := dockerCompose(ctx, verbose, "-f", c.dockerComposeFile, "pull")
-	if err != nil {
-		return fmt.Errorf("error pulling docker images: %w", err)
-	}
+	if c.skipDockerPull {
+		c.logf(1, "Skipping docker-compose pull\n")
+	} else {
+		cmd, err := dockerCompose(ctx, verbose, "-f", c.dockerComposeFile, "pull")
+		if err != nil {
+			return fmt.Errorf("error pulling docker images: %w", err)
+		}
 
-	cmd.WaitDelay = c.dockerMaxPullWait
-	dockerPullStart := time.Now()
-	c.logf(1, "Waiting for docker images to pull...\n")
-	err = cmd.Start()
-	if err != nil {
-		return fmt.Errorf("error pulling docker images: %w", err)
-	}
+		cmd.WaitDelay = c.dockerMaxPullWait
+		dockerPullStart := time.Now()
+		c.logf(1, "Waiting for docker images to pull...\n")
+		err = cmd.Start()
+		if err != nil {
+			return fmt.Errorf("error pulling docker images: %w", err)
+		}
 
-	err = cmd.Wait()
-	if err != nil {
-		c.logf(0, "docker-compose pull failed: %s\n", err)
-		return err
+		err = cmd.Wait()
+		if err != nil {
+			c.logf(0, "docker-compose pull failed: %s\n", err)
+			return err
+		}
+		c.logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
 	}
-	c.logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
 
 	args := []string{"-f", c.dockerComposeFile, "up", "-d"}
 	if verbose {
@@ -207,7 +219,7 @@ func (c *IDock) startDocker(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.dockerMaxWait)
 	defer cancel()
 
-	cmd, err = dockerCompose(ctx, verbose, args...)
+	cmd, err := dockerCompose(ctx, verbose, args...)
 	if err != nil {
 		return err
 	}
@@ -247,7 +259,7 @@ func (c *IDock) cleanup() {
 
 	if c.cleanupAttempts < 1 {
 		c.logf(0, "Docker container left intact. To cleanup run:\n")
-		c.logf(0, "docker-compose down --remove-orphans\n")
+		c.logf(0, "docker-compose -f %s down --remove-orphans\n", c.dockerComposeFile)
 		return
 	}
 
