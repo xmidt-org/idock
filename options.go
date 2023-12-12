@@ -248,7 +248,7 @@ func programMaxWait() Option {
 // skipDockerPull sets the skipDockerPull flag based on the environment variable.
 func skipDockerPull() Option {
 	return optionFunc(func(c *IDock) {
-		c.skipDockerPull = envToBool(c.dockerMaxPullWaitFlag, c.skipDockerPull)
+		c.skipDockerPull = envToBool(c.skipDockerPullFlag, c.skipDockerPull)
 	})
 }
 
