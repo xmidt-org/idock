@@ -94,11 +94,10 @@ func TestIDock_startDocker(t *testing.T) {
 	clean := IDock{
 		dockerComposeFile: "docker-compose.yml",
 		dockerStarted:     true,
-		cleanupAttempts:   5,
 		verbosity:         99,
 		noDockerCompose:   noDockerCompose,
 	}
-	clean.cleanup()
+	clean.Stop(5)
 }
 
 func TestIDock_startProgram(t *testing.T) {

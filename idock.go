@@ -133,7 +133,7 @@ func (c *IDock) Start() error {
 	ctx := context.Background()
 	err := c.startDocker(ctx)
 	if err != nil {
-		c.Logf(0, "docker startup failed: %s\n", err)
+		c.logf(0, "docker startup failed: %s\n", err)
 		return err
 	}
 
@@ -141,12 +141,12 @@ func (c *IDock) Start() error {
 		start := time.Now()
 		c.afterDocker(ctx, c)
 		end := time.Now()
-		c.Logf(1, "customization after docker took %s\n", end.Sub(start))
+		c.logf(1, "customization after docker took %s\n", end.Sub(start))
 	}
 
 	err = c.startProgram(ctx)
 	if err != nil {
-		c.Logf(0, "program startup failed: %s\n", err)
+		c.logf(0, "program startup failed: %s\n", err)
 		return err
 	}
 
@@ -154,15 +154,21 @@ func (c *IDock) Start() error {
 		start := time.Now()
 		c.afterProgram(ctx, c)
 		end := time.Now()
-		c.Logf(1, "customization after program took %s\n", end.Sub(start))
+		c.logf(1, "customization after program took %s\n", end.Sub(start))
 	}
 
 	return nil
 }
 
 // Stop stops the docker-compose services and cleans up any docker containers
-// that were started.
-func (c *IDock) Stop() {
+// that were started.  If force is set to a value greater than 0, then the
+// cleanup process is attempted that many times before giving up, overwriting
+// the value set by the CleanupAttempts option or the IDOCK_CLEANUP_ATTEMPTS
+// environment variable.
+func (c *IDock) Stop(force ...int) {
+	if len(force) > 0 && force[0] > 0 {
+		c.cleanupAttempts = force[0]
+	}
 	c.cleanup()
 }
 
@@ -180,7 +186,7 @@ func (c *IDock) startDocker(ctx context.Context) error {
 
 	cmd.WaitDelay = c.dockerMaxPullWait
 	dockerPullStart := time.Now()
-	c.Logf(1, "Waiting for docker images to pull...\n")
+	c.logf(1, "Waiting for docker images to pull...\n")
 	err = cmd.Start()
 	if err != nil {
 		return fmt.Errorf("error pulling docker images: %w", err)
@@ -188,10 +194,10 @@ func (c *IDock) startDocker(ctx context.Context) error {
 
 	err = cmd.Wait()
 	if err != nil {
-		c.Logf(0, "docker-compose pull failed: %s\n", err)
+		c.logf(0, "docker-compose pull failed: %s\n", err)
 		return err
 	}
-	c.Logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
+	c.logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
 
 	args := []string{"-f", c.dockerComposeFile, "up", "-d"}
 	if verbose {
@@ -214,28 +220,34 @@ func (c *IDock) startDocker(ctx context.Context) error {
 	}
 	c.dockerStarted = true
 
-	c.Logf(1, "Waiting for services to start...\n")
+	c.logf(1, "Waiting for services to start...\n")
 	err = cmd.Wait()
 	if err != nil {
-		c.Logf(0, "docker-compose services failed to start: %s\n", err)
+		c.logf(0, "docker-compose services failed to start: %s\n", err)
 		return err
 	}
 
 	err = c.waitForPorts(ctx, c.dockerTCPPorts)
 	if err != nil {
-		c.Logf(1, "docker-compose services took too long to start (%s)\n", c.dockerMaxWait)
+		c.logf(1, "docker-compose services took too long to start (%s)\n", c.dockerMaxWait)
 		return err
 	}
 	dockerReady := time.Now()
-	c.Logf(1, "docker-compose services took %s to start\n", dockerReady.Sub(dockerStart))
+	c.logf(1, "docker-compose services took %s to start\n", dockerReady.Sub(dockerStart))
 
 	return nil
 }
 
 func (c *IDock) cleanup() {
-	c.Logf(1, "Cleaning up...\n")
+	c.logf(1, "Cleaning up...\n")
 
-	if !c.dockerStarted || c.cleanupAttempts < 1 {
+	if !c.dockerStarted {
+		return
+	}
+
+	if c.cleanupAttempts < 1 {
+		c.logf(0, "Docker container left intact. To cleanup run:\n")
+		c.logf(0, "docker-compose down --remove-orphans\n")
 		return
 	}
 
@@ -247,7 +259,7 @@ func (c *IDock) cleanup() {
 			if err == nil {
 				return
 			}
-			c.Logf(1, "Failed to clean up docker-compose services on try %d: %s\n", i+1, err)
+			c.logf(1, "Failed to clean up docker-compose services on try %d: %s\n", i+1, err)
 		}
 	}
 
@@ -264,10 +276,10 @@ func (c *IDock) startProgram(ctx context.Context) error {
 	err := c.waitForPorts(ctx, c.programTCPPorts)
 	end := time.Now()
 	if err != nil {
-		c.Logf(1, "program took too long to start: %s\n", end.Sub(start))
+		c.logf(1, "program took too long to start: %s\n", end.Sub(start))
 		return err
 	}
-	c.Logf(1, "program startup took %s\n", end.Sub(start))
+	c.logf(1, "program startup took %s\n", end.Sub(start))
 
 	return nil
 }
@@ -337,24 +349,24 @@ func (c *IDock) waitForPorts(ctx context.Context, ports []int) error {
 
 	sort.Ints(succeeded)
 	for _, port := range succeeded {
-		c.Logf(1, "Port %d started\n", port)
+		c.logf(1, "Port %d started\n", port)
 	}
 
 	sort.Ints(failed)
 	for _, port := range failed {
-		c.Logf(1, "Port %d failed to start\n", port)
+		c.logf(1, "Port %d failed to start\n", port)
 	}
 	if len(failed) > 0 {
 		return errTimedOut
 	}
 
-	c.Logf(1, "All services are ready.\n")
+	c.logf(1, "All services are ready.\n")
 	return nil
 }
 
-// Logf prints a message if the verbosity level is greater than or equal to the
+// logf prints a message if the verbosity level is greater than or equal to the
 // given level.
-func (c *IDock) Logf(level int, format string, a ...any) {
+func (c *IDock) logf(level int, format string, a ...any) {
 	if c.verbosity >= level {
 		fmt.Printf(format, a...)
 	}
