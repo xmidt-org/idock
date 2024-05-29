@@ -1,20 +1,20 @@
 # SPDX-FileCopyrightText: 2023 Comcast Cable Communications Management, LLC
 # SPDX-License-Identifier: Apache-2.0
---- 
-services: 
-  nginx: 
+---
+services:
+  nginx:
     image: nginx
-    ports: 
+    ports:
       - "7999:80"
-  dynamodb: 
+  dynamodb:
     hostname: dynamodb.local.amazonaws.com
     image: amazon/dynamodb-local
     command: -jar DynamoDBLocal.jar -inMemory -sharedDb
-    ports: 
+    ports:
       - "7998:8000"
-  kinesis: 
+  kinesis:
     hostname: kinesis
     image: saidsef/aws-kinesis-local
-    ports: 
-      - "7997:4567" 
+    ports:
+      - "7997:4567"
 version: "3.8"
