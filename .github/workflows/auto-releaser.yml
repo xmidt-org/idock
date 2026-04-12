@@ -8,6 +8,9 @@ on:
     - cron: '0 12 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   release:
     uses: xmidt-org/shared-go/.github/workflows/auto-releaser.yml@766cd1914571123cc26ab6e0f1782c784dc4f11f # v4.4.28
