@@ -3,18 +3,18 @@
 ---
 services:
   nginx:
-    image: nginx
+    image: docker.io/library/nginx
     ports:
       - "7999:80"
   dynamodb:
     hostname: dynamodb.local.amazonaws.com
-    image: amazon/dynamodb-local
+    image: docker.io/amazon/dynamodb-local
     command: -jar DynamoDBLocal.jar -inMemory -sharedDb
     ports:
       - "7998:8000"
   kinesis:
     hostname: kinesis
-    image: saidsef/aws-kinesis-local
+    image: docker.io/saidsef/aws-kinesis-local
     ports:
       - "7997:4567"
 version: "3.8"
