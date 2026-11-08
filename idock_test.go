@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var unknownErr = errors.New("unknown error")
+var errUnknown = errors.New("unknown error")
 
 func TestIDock_startDocker(t *testing.T) {
 	var noDockerCompose bool
@@ -35,7 +35,7 @@ func TestIDock_startDocker(t *testing.T) {
 				dockerComposeFile: "docker-compose.yml",
 				dockerMaxWait:     1 * time.Nanosecond,
 			},
-			expectErr: unknownErr,
+			expectErr: errUnknown,
 		}, {
 			description: "success, no verbosity",
 			have: IDock{
@@ -79,24 +79,23 @@ func TestIDock_startDocker(t *testing.T) {
 				localhost:         "localhost",
 				dockerTCPPorts:    []int{7999, 9999},
 			},
-			expectErr: unknownErr,
+			expectErr: errUnknown,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			assert := assert.New(t)
-			//require := require.New(t)
 
 			err := tc.have.startDocker(context.Background())
 
 			if tc.have.noDockerCompose {
 				noDockerCompose = true
 			}
-			switch tc.expectErr {
-			case nil:
-				assert.NoError(err)
-			case unknownErr:
-				assert.Error(err)
+			switch {
+			case tc.expectErr == nil:
+				require.NoError(t, err)
+			case errors.Is(tc.expectErr, errUnknown):
+				require.Error(t, err)
 			default:
 				assert.ErrorIs(err, tc.expectErr)
 			}
@@ -161,7 +160,7 @@ func TestIDock_startProgram(t *testing.T) {
 				programMaxWait:  time.Millisecond * 100,
 			},
 			makeServer: true,
-			expectErr:  unknownErr,
+			expectErr:  errUnknown,
 		},
 	}
 	for _, tc := range tests {
@@ -170,7 +169,7 @@ func TestIDock_startProgram(t *testing.T) {
 			require := require.New(t)
 
 			if tc.makeServer {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte("Mock response"))
 				}))
@@ -188,11 +187,11 @@ func TestIDock_startProgram(t *testing.T) {
 
 			err := tc.have.startProgram(context.Background())
 
-			switch tc.expectErr {
-			case nil:
-				assert.NoError(err)
-			case unknownErr:
-				assert.Error(err)
+			switch {
+			case tc.expectErr == nil:
+				require.NoError(err)
+			case errors.Is(tc.expectErr, errUnknown):
+				require.Error(err)
 			default:
 				assert.ErrorIs(err, tc.expectErr)
 			}
@@ -209,7 +208,7 @@ func TestIDock_isPortOpen(t *testing.T) {
 		{
 			description: "port is not open",
 			wait:        100 * time.Millisecond,
-			expectErr:   unknownErr,
+			expectErr:   errUnknown,
 		}, {
 			description: "port is open",
 			wait:        100 * time.Millisecond,
@@ -224,7 +223,7 @@ func TestIDock_isPortOpen(t *testing.T) {
 			port := 51 // probably not used
 
 			if tc.expectErr == nil {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte("Mock response"))
 				}))
@@ -245,12 +244,11 @@ func TestIDock_isPortOpen(t *testing.T) {
 
 			err := c.isPortOpen(ctx, port)
 
-			switch tc.expectErr {
-			case nil:
-				assert.NoError(err)
-
-			case unknownErr:
-				assert.Error(err)
+			switch {
+			case tc.expectErr == nil:
+				require.NoError(err)
+			case errors.Is(tc.expectErr, errUnknown):
+				require.Error(err)
 			default:
 				assert.ErrorIs(err, tc.expectErr)
 			}
@@ -328,7 +326,7 @@ func TestNewAndOptions(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("Mock response"))
 	}))
@@ -386,7 +384,7 @@ func TestRun(t *testing.T) {
 				RequireDockerTCPPorts(8001),
 				CleanupAttempts(5),
 			},
-			expectErr: unknownErr,
+			expectErr: errUnknown,
 		}, {
 			description: "fail starting program",
 			opts: []Option{
@@ -402,7 +400,7 @@ func TestRun(t *testing.T) {
 
 				CleanupAttempts(5),
 			},
-			expectErr: unknownErr,
+			expectErr: errUnknown,
 		},
 	}
 
@@ -413,13 +411,12 @@ func TestRun(t *testing.T) {
 			c := New(tc.opts...)
 			err := c.Start()
 
-			switch tc.expectErr {
-			case nil:
+			switch {
+			case tc.expectErr == nil:
 				c.Stop()
-				assert.NoError(err)
-
-			case unknownErr:
-				assert.Error(err)
+				require.NoError(err)
+			case errors.Is(tc.expectErr, errUnknown):
+				require.Error(err)
 			default:
 				assert.ErrorIs(err, tc.expectErr)
 			}

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	// IDOCK_VERBOSITY_FLAG is the default environment variable that controls
+	// VERBOSITY_FLAG is the default environment variable that controls
 	// the verbosity of the output.
 	VERBOSITY_FLAG = "IDOCK_VERBOSITY"
 
@@ -42,7 +42,7 @@ const (
 )
 
 var (
-	errTimedOut = fmt.Errorf("timed out")
+	errTimedOut = errors.New("timed out")
 )
 
 // IDock is the main struct for the idock package.
@@ -91,7 +91,7 @@ func emptyAfter(context.Context, *IDock) {}
 func New(opts ...Option) *IDock {
 	var c IDock
 
-	defaults := []Option{
+	defaults := []Option{ //nolint:prealloc // appended to once, size is incidental
 		VerbosityEnvarName(VERBOSITY_FLAG),
 		CleanupAttemptsEnvarName(CLEANUP_ATTEMPTS_FLAG),
 		DockerMaxWaitEnvarName(DOCKER_MAX_WAIT_FLAG),
@@ -180,6 +180,30 @@ func (c *IDock) Stop(force ...int) {
 	c.cleanup()
 }
 
+func (c *IDock) pullDockerImages(ctx context.Context, verbose bool) error {
+	cmd, err := dockerCompose(ctx, verbose, "-f", c.dockerComposeFile, "pull")
+	if err != nil {
+		return fmt.Errorf("error pulling docker images: %w", err)
+	}
+
+	cmd.WaitDelay = c.dockerMaxPullWait
+	dockerPullStart := time.Now()
+	c.logf(1, "Waiting for docker images to pull...\n")
+	err = cmd.Start()
+	if err != nil {
+		return fmt.Errorf("error pulling docker images: %w", err)
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		c.logf(0, "docker-compose pull failed: %s\n", err)
+		return err
+	}
+	c.logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
+
+	return nil
+}
+
 func (c *IDock) startDocker(ctx context.Context) error {
 	if c.dockerComposeFile == "" {
 		return nil
@@ -189,26 +213,8 @@ func (c *IDock) startDocker(ctx context.Context) error {
 
 	if c.skipDockerPull {
 		c.logf(1, "Skipping docker-compose pull\n")
-	} else {
-		cmd, err := dockerCompose(ctx, verbose, "-f", c.dockerComposeFile, "pull")
-		if err != nil {
-			return fmt.Errorf("error pulling docker images: %w", err)
-		}
-
-		cmd.WaitDelay = c.dockerMaxPullWait
-		dockerPullStart := time.Now()
-		c.logf(1, "Waiting for docker images to pull...\n")
-		err = cmd.Start()
-		if err != nil {
-			return fmt.Errorf("error pulling docker images: %w", err)
-		}
-
-		err = cmd.Wait()
-		if err != nil {
-			c.logf(0, "docker-compose pull failed: %s\n", err)
-			return err
-		}
-		c.logf(1, "docker-compose pull took %s\n", time.Since(dockerPullStart))
+	} else if err := c.pullDockerImages(ctx, verbose); err != nil {
+		return err
 	}
 
 	args := []string{"-f", c.dockerComposeFile, "up", "-d"}
